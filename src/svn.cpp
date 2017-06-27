@@ -404,6 +404,10 @@ public:
     bool propsFetched;
     bool needCommit;
 
+    // posixProperties["repo name"]["svn path"]["property name"] = "property value"
+    QMap<QString, QMap<QString, QMap<QString, QString> > > posixProperties;
+    QList<QString> knownPosixProperties;
+
     SvnRevision(int revision, svn_fs_t *f, apr_pool_t *parent_pool)
         : pool(parent_pool), fs(f), fs_root(0), revnum(revision), propsFetched(false)
     {
@@ -1044,6 +1048,63 @@ int SvnRevision::fetchIgnoreProps(QString *ignore, apr_pool_t *pool, const char 
         *ignore = QString(prop->data);
     } else {
         *ignore = QString();
+    }
+
+    return EXIT_SUCCESS;
+}
+
+int SvnRevision::exportPosixProps(apr_pool_t *pool, const char *key, svn_fs_root_t *fs_root)
+{
+    // Get svn:ignore
+    svn_string_t *prop = NULL;
+    SVN_ERR(svn_fs_node_prop(&prop, fs_root, key, "svn:ignore", pool));
+    if (prop) {
+        // *ignore = QString(prop->data);
+    } else {
+        // *ignore = QString();
+    }
+
+    return EXIT_SUCCESS;
+}
+
+int SvnRevision::addPosixProperties(apr_pool_t *pool, const char *key, QString path,
+                              svn_fs_root_t *fs_root, Repository::Transaction *txn, const char *content)
+{
+    // Check for number of subfiles if no content
+    if (!content) {
+        apr_hash_t *entries;
+        SVN_ERR(svn_fs_dir_entries(&entries, fs_root, key, pool));
+        // Return if any subfiles
+        if (apr_hash_count(entries)!=0) {
+            return EXIT_FAILURE;
+        }
+    }
+
+    // Add etckeeper-File in repo root!
+    QString etckeeperPath = ".etckeeper";
+    if (content) {
+        QIODevice *io = txn->addFile(etckeeperPath, 33188, strlen(exportPosixProps));
+        io->write(content);
+        io->putChar('\n');
+    } else {
+        QIODevice *io = txn->addFile(etckeeperPath, 33188, 0);
+        io->putChar('\n');
+    }
+
+    return EXIT_SUCCESS;
+}
+
+int SvnRevision::fetchPosixProps(apr_pool_t *pool, const char *key, svn_fs_root_t *fs_root, Repository repository)
+{
+    // Get properties
+    for(const QString& propertyName : knownPosixProperties) {
+        svn_string_t *prop = NULL;
+        SVN_ERR(svn_fs_node_prop(&prop, fs_root, key, propertyName.toStdString(), pool));
+        if (prop) {
+            *posixProperties[repository.name][key][propertyName] = QString(prop->data);
+        } else {
+            *posixProperties[repository.name][key][propertyName] = QString();
+        }
     }
 
     return EXIT_SUCCESS;

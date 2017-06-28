@@ -143,6 +143,7 @@ static const CommandLineOption options[] = {
     {"--svn-branches", "Use the contents of SVN when creating branches, Note: SVN tags are branches as well"},
     {"--empty-dirs", "Add .gitignore-file for empty dirs"},
     {"--svn-ignore", "Import svn-ignore-properties via .gitignore"},
+    {"--posix-props", "Import svn-group/owner/unix-mode-properties via .etckeeper file"},
     {"--propcheck", "Check for svn-properties except svn-ignore"},
     {"-h, --help", "show help"},
     {"-v, --version", "show version"},

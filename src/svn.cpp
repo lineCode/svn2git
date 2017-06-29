@@ -382,10 +382,10 @@ public:
     int addGitIgnore(apr_pool_t *pool, const char *key, QString path,
                      svn_fs_root_t *fs_root, Repository::Transaction *txn, const char *content = NULL);
     int fetchIgnoreProps(QString *ignore, apr_pool_t *pool, const char *key, svn_fs_root_t *fs_root);
-    int deletePosixProperties(QString path, QString repositoryName, bool recursive = false);
-    int exportPosixProps(QString repositoryName, QString *content);
-    int addPosixProperties(Repository::Transaction *txn, QString repositoryName);
-    int fetchPosixProperties(apr_pool_t *pool, const char *key, svn_fs_root_t *fs_root, QString path, QString repositoryName);
+    int deletePosixProperties(QString path, Repository::Transaction *txn, bool recursive = false);
+    int exportPosixProps(Repository::Transaction *txn, QString *content);
+    int addPosixProperties(Repository::Transaction *txn);
+    int fetchPosixProperties(apr_pool_t *pool, const char *key, svn_fs_root_t *fs_root, QString path, Repository::Transaction *txn);
     int fetchUnknownProps(apr_pool_t *pool, const char *key, svn_fs_root_t *fs_root);
     int recursiveDumpDir(Repository::Transaction *txn, svn_fs_root_t *fs_root,
                             const QByteArray &pathname, const QString &finalPathName,
@@ -439,7 +439,7 @@ int SvnRevision::recursiveDumpDir(Repository::Transaction *txn, svn_fs_root_t *f
                     qDebug() << "recursiveDumpDir:" << entryNameQString << "skip entry for different/ignored repository";
                 continue;
             }
-            if(fetchPosixProperties(pool, entryName, fs_root, entryFinalName, rule.repository) != EXIT_SUCCESS)
+            if(fetchPosixProperties(pool, entryName, fs_root, entryFinalName, txn) != EXIT_SUCCESS)
                 qWarning() << "Error fetching posix svn-properties (" << entryName << ")";
 
             if (recursiveDumpDir(txn, fs_root, entryName, entryFinalName, dirpool, revnum, rule, matchRules) == EXIT_FAILURE)
@@ -447,7 +447,7 @@ int SvnRevision::recursiveDumpDir(Repository::Transaction *txn, svn_fs_root_t *f
         } else if (i.value() == svn_node_file) {
             printf("+");
             fflush(stdout);
-            if(fetchPosixProperties(pool, entryName, fs_root, entryFinalName, rule.repository) != EXIT_SUCCESS)
+            if(fetchPosixProperties(pool, entryName, fs_root, entryFinalName, txn) != EXIT_SUCCESS)
                 qWarning() << "Error fetching posix svn-properties (" << entryName << ")";
             if (dumpBlob(txn, fs_root, entryName, entryFinalName, dirpool) == EXIT_FAILURE)
                 return EXIT_FAILURE;
@@ -604,11 +604,13 @@ int SvnRevision::commit()
     // now create the commit
     if (fetchRevProps() != EXIT_SUCCESS)
         return EXIT_FAILURE;
+
     foreach (Repository *repo, repositories.values()) {
         repo->commit();
     }
 
     foreach (Repository::Transaction *txn, transactions) {
+        addPosixProperties(txn);
         txn->setAuthor(authorident);
         txn->setDateTime(epoch);
         txn->setLog(log);
@@ -893,20 +895,20 @@ int SvnRevision::exportInternal(const char *key, const svn_fs_path_change2_t *ch
     if (change->change_kind == svn_fs_path_change_replace && path_from == NULL) {
         if(ruledebug)
             qDebug() << "replaced with empty path (" << branch << path << ")";
-        if (deletePosixProperties(path, repo->getName(), true) != EXIT_SUCCESS)
+        if (deletePosixProperties(path, txn, true) != EXIT_SUCCESS)
             qWarning() << "Error deleting posix svn-properties (" << key << ")";
         txn->deleteFile(path);
     }
     if (change->change_kind == svn_fs_path_change_delete) {
         if(ruledebug)
             qDebug() << "delete (" << branch << path << ")";
-        if (deletePosixProperties(path, repo->getName(), true) != EXIT_SUCCESS)
+        if (deletePosixProperties(path, txn, true) != EXIT_SUCCESS)
             qWarning() << "Error deleting posix svn-properties (" << key << ")";
         txn->deleteFile(path);
     } else if (!current.endsWith('/')) {
         if(ruledebug)
             qDebug() << "add/change file (" << key << "->" << branch << path << ")";
-        if (fetchPosixProperties(pool, key, fs_root, path, repo->getName()) != EXIT_SUCCESS)
+        if (fetchPosixProperties(pool, key, fs_root, path, txn) != EXIT_SUCCESS)
             qWarning() << "Error fetching posix svn-properties (" << key << ")";
         dumpBlob(txn, fs_root, key, path, pool);
     } else {
@@ -916,7 +918,7 @@ int SvnRevision::exportInternal(const char *key, const svn_fs_path_change2_t *ch
         // Check posix svn-properties
         if (((path_from == NULL && change->prop_mod==1) || (path_from != NULL && change->change_kind == svn_fs_path_change_add))
             && CommandLineParser::instance()->contains("posix-props")) {
-            if (fetchPosixProperties(pool, key, fs_root, path, repo->getName()) != EXIT_SUCCESS)
+            if (fetchPosixProperties(pool, key, fs_root, path, txn) != EXIT_SUCCESS)
                 qWarning() << "Error fetching posix svn-properties (" << key << ")";
         }
         // Check unknown svn-properties
@@ -951,14 +953,12 @@ int SvnRevision::exportInternal(const char *key, const svn_fs_path_change2_t *ch
         }
 
         if (ignoreSet == false) {
-            if (deletePosixProperties(path, repo->getName(), true) != EXIT_SUCCESS)
+            if (deletePosixProperties(path, txn, true) != EXIT_SUCCESS)
                 qWarning() << "Error deleting posix svn-properties (" << key << ")";
             txn->deleteFile(path);
         }
         recursiveDumpDir(txn, fs_root, key, path, pool, revnum, rule, matchRules);
     }
-
-    addPosixProperties(txn, repo->getName());
 
     return EXIT_SUCCESS;
 }
@@ -1081,8 +1081,10 @@ int SvnRevision::fetchIgnoreProps(QString *ignore, apr_pool_t *pool, const char 
     return EXIT_SUCCESS;
 }
 
-int SvnRevision::exportPosixProps(QString repositoryName, QString *content)
+int SvnRevision::exportPosixProps(Repository::Transaction *txn, QString *content)
 {
+    QString repositoryName = QString(transactions.key(txn));
+    qDebug() << "exportPosixProps" << "repository" << repositoryName;
     foreach(QString path, posixProperties[repositoryName].keys()) {
         foreach(QString propertyName, posixProperties[repositoryName][path].keys()) {
             if(propertyName == "svn:owner") {
@@ -1098,48 +1100,65 @@ int SvnRevision::exportPosixProps(QString repositoryName, QString *content)
     return EXIT_SUCCESS;
 }
 
-int SvnRevision::deletePosixProperties(QString path, QString repositoryName, bool recursive)
+int SvnRevision::deletePosixProperties(QString path, Repository::Transaction *txn, bool recursive)
 {
+    QString repositoryName = QString(transactions.key(txn));
+    qDebug() << "deletePosixProperties" << "repository:" << repositoryName << "path:" << path;
     if(recursive && path.endsWith("/")) {
         foreach(QString subPath, posixProperties[repositoryName].keys()) {
             if(subPath.startsWith(path))
-                posixProperties[repositoryName].remove(subPath);
+            {
+                int changed = posixProperties[repositoryName].remove(subPath);
+                if(changed > 0)
+                    needCommit = true;
+            }
         }
     } else {
-        posixProperties[repositoryName].remove(QString(path));
+        int changed = posixProperties[repositoryName].remove(QString(path));
+        if(changed > 0)
+            needCommit = true;
     }
 
     return EXIT_SUCCESS;
 }
 
-int SvnRevision::addPosixProperties(Repository::Transaction *txn, QString repositoryName)
+int SvnRevision::addPosixProperties(Repository::Transaction *txn)
 {
+    if(!needCommit || !CommandLineParser::instance()->contains("posix-props"))
+        return EXIT_SUCCESS;
+
+    QString repositoryName = QString(transactions.key(txn));
+    qDebug() << "addPosixProperties" << "repository:" << repositoryName;
     QString content;
-    exportPosixProps(repositoryName, &content);
+    exportPosixProps(txn, &content);
 
     // Add etckeeper-File in repo root!
     QString etckeeperPath = ".etckeeper";
     if (!content.isEmpty()) {
         const char *contentChar = content.toStdString().c_str();
-        QIODevice *io = txn->addFile(etckeeperPath, 33188, strlen(contentChar));
+        QIODevice *io = txn->addFile(etckeeperPath, 0100644, strlen(contentChar));
         io->write(contentChar);
         io->putChar('\n');
     } else {
-        QIODevice *io = txn->addFile(etckeeperPath, 33188, 0);
+        QIODevice *io = txn->addFile(etckeeperPath, 0100644, 0);
         io->putChar('\n');
     }
 
     return EXIT_SUCCESS;
 }
 
-int SvnRevision::fetchPosixProperties(apr_pool_t *pool, const char *key, svn_fs_root_t *fs_root, QString path, QString repositoryName)
+int SvnRevision::fetchPosixProperties(apr_pool_t *pool, const char *key, svn_fs_root_t *fs_root, QString path, Repository::Transaction *txn)
 {
+    QString repositoryName = QString(transactions.key(txn));
+    qDebug() << "deletePosixProperties" << "repository:" << repositoryName << "path:" << path;
     // Get properties
     foreach(QString propertyName, knownPosixProperties) {
         svn_string_t *prop = NULL;
         SVN_ERR(svn_fs_node_prop(&prop, fs_root, key, propertyName.toStdString().c_str(), pool));
         if (prop) {
+            qDebug() << "deletePosixProperties" << "repository:" << repositoryName << "path:" << path << "propertyName" << propertyName;
             posixProperties[repositoryName][path][propertyName] = QString(prop->data);
+            needCommit = true;
         }
     }
 
@@ -1156,7 +1175,7 @@ int SvnRevision::fetchUnknownProps(apr_pool_t *pool, const char *key, svn_fs_roo
     const void *propKey;
     for (hi = apr_hash_first(pool, table); hi; hi = apr_hash_next(hi)) {
         apr_hash_this(hi, &propKey, NULL, &propVal);
-        if (strcmp((char*)propKey, "svn:ignore")!=0 || !knownPosixProperties.contains(QString((char*)propKey))) {
+        if (strcmp((char*)propKey, "svn:ignore")!=0 && !knownPosixProperties.contains(QString((char*)propKey))) {
             qWarning() << "WARN: Unknown svn-property" << (char*)propKey << "set to" << ((svn_string_t*)propVal)->data << "for" << key;
         }
     }

@@ -610,11 +610,13 @@ int SvnRevision::commit()
         repo->commit();
     }
 
-    if(CommandLineParser::instance()->contains("posix-props") && !posixPropertiesRepos.isEmpty())
+    if(CommandLineParser::instance()->contains("posix-props") && CommandLineParser::instance()->contains("debug-posix-props") &&
+        !posixPropertiesRepos.isEmpty())
         qDebug() << "SvnRevision::commit" << "posixPropertiesRepos" << posixPropertiesRepos;
     
     while(CommandLineParser::instance()->contains("posix-props") && !posixPropertiesRepos.isEmpty()) {
-        qDebug() << "SvnRevision::commit" << "repository:" << posixPropertiesRepos.first() << "processed";
+        if(CommandLineParser::instance()->contains("debug-posix-props"))
+            qDebug() << "SvnRevision::commit" << "repository:" << posixPropertiesRepos.first() << "processed";
         addPosixProperties(transactions.value(posixPropertiesRepos.takeFirst()));
     }
 
@@ -1092,7 +1094,8 @@ int SvnRevision::fetchIgnoreProps(QString *ignore, apr_pool_t *pool, const char 
 int SvnRevision::exportPosixProps(Repository::Transaction *txn, QString *content)
 {
     QString repositoryName = QString(transactions.key(txn));
-    qDebug() << "exportPosixProps" << "repository" << repositoryName;
+    if(CommandLineParser::instance()->contains("debug-posix-props"))
+        qDebug() << "exportPosixProps" << "repository" << repositoryName;
     foreach(QString path, posixProperties[repositoryName].keys()) {
         foreach(QString propertyName, posixProperties[repositoryName][path].keys()) {
             if(propertyName == "svn:owner") {
@@ -1112,7 +1115,8 @@ int SvnRevision::deletePosixProperties(QString path, Repository::Transaction *tx
 {
     QString repositoryName = QString(transactions.key(txn));
     bool propChanged = false;
-    qDebug() << "deletePosixProperties" << "repository:" << repositoryName << "path:" << path;
+    if(CommandLineParser::instance()->contains("debug-posix-props"))
+        qDebug() << "deletePosixProperties" << "repository:" << repositoryName << "path:" << path;
     if(recursive && path.endsWith("/")) {
         foreach(QString subPath, posixProperties[repositoryName].keys()) {
             if(subPath.startsWith(path))
@@ -1133,7 +1137,8 @@ int SvnRevision::deletePosixProperties(QString path, Repository::Transaction *tx
     }
 
     if(!posixPropertiesRepos.contains(repositoryName) && propChanged) {
-        qDebug() << "deletePosixProperties" << "repository:" << repositoryName << "added to posixPropertiesRepos" << posixPropertiesRepos;
+        if(CommandLineParser::instance()->contains("debug-posix-props"))
+            qDebug() << "deletePosixProperties" << "repository:" << repositoryName << "added to posixPropertiesRepos" << posixPropertiesRepos;
         posixPropertiesRepos.append(repositoryName);
     }
 
@@ -1146,7 +1151,8 @@ int SvnRevision::addPosixProperties(Repository::Transaction *txn)
         return EXIT_SUCCESS;
 
     QString repositoryName = QString(transactions.key(txn));
-    qDebug() << "addPosixProperties" << "rev" << revnum << "repository:" << repositoryName;
+    if(CommandLineParser::instance()->contains("debug-posix-props"))
+        qDebug() << "addPosixProperties" << "rev" << revnum << "repository:" << repositoryName;
     QString content;
     exportPosixProps(txn, &content);
 
@@ -1158,11 +1164,13 @@ int SvnRevision::addPosixProperties(Repository::Transaction *txn)
         // something strange happens when using "const char *"
         int writeStatus = io->write(content.toUtf8());
         io->putChar('\n');
-        qDebug() << "addPosixProperties" << "added file with length" << content.length() << "write status" << writeStatus;
+        if(CommandLineParser::instance()->contains("debug-posix-props"))
+            qDebug() << "addPosixProperties" << "added file with length" << content.length() << "write status" << writeStatus;
     } else {
         LoggingQProcess *io = (LoggingQProcess *) txn->addFile(etckeeperPath, 0100644, 0);
         io->putChar('\n');
-        qDebug() << "addPosixProperties" << "added empty file";
+        if(CommandLineParser::instance()->contains("debug-posix-props"))
+            qDebug() << "addPosixProperties" << "added empty file";
     }
 
     return EXIT_SUCCESS;
@@ -1178,24 +1186,31 @@ int SvnRevision::fetchPosixProperties(apr_pool_t *pool, const char *key, svn_fs_
         SVN_ERR(svn_fs_node_prop(&prop, fs_root, key, propertyName.toStdString().c_str(), pool));
         if (prop) {
             QString propDataQString;
-            if(propertyName == "svn:owner" || propertyName == "svn:group")
+            if(propertyName == "svn:owner" || propertyName == "svn:group") {
                 propDataQString = QString(prop->data).split(" ").last();
-            else
+                if(CommandLineParser::instance()->contains("debug-posix-props"))
+                    qDebug() << "fetchPosixProperties" << "propDataQString split:" << propDataQString << "propertyName" << propertyName;
+            } else {
                 propDataQString = QString(prop->data);
-
+                if(CommandLineParser::instance()->contains("debug-posix-props"))
+                    qDebug() << "fetchPosixProperties" << "propDataQString:" << propDataQString << "propertyName" << propertyName;
+            }
             if(posixProperties[repositoryName][path][propertyName] != propDataQString) {
-                qDebug() << "fetchPosixProperties" << "repository:" << repositoryName << "path:" << path << "propertyName" << propertyName;
-                posixProperties[repositoryName][path][propertyName] = QString(prop->data);
+                if(CommandLineParser::instance()->contains("debug-posix-props"))
+                    qDebug() << "fetchPosixProperties" << "repository:" << repositoryName << "path:" << path << "propertyName" << propertyName;
+                posixProperties[repositoryName][path][propertyName] = propDataQString;
                 needCommit = true;
                 propChanged = true;
             } else {
-                qDebug() << "fetchPosixProperties" << "repository:" << repositoryName << "path:" << path << "propertyName" << propertyName << "unchanged";
+                if(CommandLineParser::instance()->contains("debug-posix-props"))
+                    qDebug() << "fetchPosixProperties" << "repository:" << repositoryName << "path:" << path << "propertyName" << propertyName << "unchanged";
             }
         }
     }
 
     if(!posixPropertiesRepos.contains(repositoryName) && propChanged) {
-        qDebug() << "fetchPosixProperties" << "repository:" << repositoryName << "added to posixPropertiesRepos" << posixPropertiesRepos;
+        if(CommandLineParser::instance()->contains("debug-posix-props"))
+            qDebug() << "fetchPosixProperties" << "repository:" << repositoryName << "added to posixPropertiesRepos" << posixPropertiesRepos;
         posixPropertiesRepos.append(repositoryName);
     }
 

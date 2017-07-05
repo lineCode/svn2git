@@ -144,6 +144,7 @@ static const CommandLineOption options[] = {
     {"--empty-dirs", "Add .gitignore-file for empty dirs"},
     {"--svn-ignore", "Import svn-ignore-properties via .gitignore"},
     {"--posix-props", "Import svn-group/owner/unix-mode-properties via .etckeeper file"},
+    {"--debug-posix-props", "debug processing of svn-group/owner/unix-mode-properties"},
     {"--propcheck", "Check for svn-properties except svn-ignore"},
     {"-h, --help", "show help"},
     {"-v, --version", "show version"},

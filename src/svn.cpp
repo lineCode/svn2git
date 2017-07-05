@@ -1096,11 +1096,11 @@ int SvnRevision::exportPosixProps(Repository::Transaction *txn, QString *content
     foreach(QString path, posixProperties[repositoryName].keys()) {
         foreach(QString propertyName, posixProperties[repositoryName][path].keys()) {
             if(propertyName == "svn:owner") {
-                content->append("maybe chown '" + posixProperties[repositoryName][path][propertyName] + "' " + "'" + path + "'");
+                content->append("maybe chown '" + posixProperties[repositoryName][path][propertyName] + "' " + "'" + path + "'" + "\n");
             } else if(propertyName == "svn:group") {
-                content->append("maybe chgrp '" + posixProperties[repositoryName][path][propertyName] + "' " + "'" + path + "'");
+                content->append("maybe chgrp '" + posixProperties[repositoryName][path][propertyName] + "' " + "'" + path + "'" + "\n");
             } else if(propertyName == "svn:unix-mode") {
-                content->append("maybe chmod " + posixProperties[repositoryName][path][propertyName] + " " + "'" + path + "'");
+                content->append("maybe chmod " + posixProperties[repositoryName][path][propertyName] + " " + "'" + path + "'" + "\n");
             }
         }
     }
@@ -1153,13 +1153,14 @@ int SvnRevision::addPosixProperties(Repository::Transaction *txn)
     // Add etckeeper-File in repo root!
     QString etckeeperPath = ".etckeeper";
     if (!content.isEmpty()) {
-        const char *contentChar = content.toStdString().c_str();
-        QIODevice *io = txn->addFile(etckeeperPath, 0100644, strlen(contentChar));
-        int writeStatus = io->write(contentChar);
+        // const char *contentChar = content.toStdString().c_str();
+        QIODevice *io = txn->addFile(etckeeperPath, 0100644, content.length());
+        // something strange happens when using "const char *"
+        int writeStatus = io->write(content.toUtf8());
         io->putChar('\n');
-        qDebug() << "addPosixProperties" << "added file with length" << strlen(contentChar) << "write status" << writeStatus;
+        qDebug() << "addPosixProperties" << "added file with length" << content.length() << "write status" << writeStatus;
     } else {
-        QIODevice *io = txn->addFile(etckeeperPath, 0100644, 0);
+        LoggingQProcess *io = (LoggingQProcess *) txn->addFile(etckeeperPath, 0100644, 0);
         io->putChar('\n');
         qDebug() << "addPosixProperties" << "added empty file";
     }
@@ -1176,7 +1177,12 @@ int SvnRevision::fetchPosixProperties(apr_pool_t *pool, const char *key, svn_fs_
         svn_string_t *prop = NULL;
         SVN_ERR(svn_fs_node_prop(&prop, fs_root, key, propertyName.toStdString().c_str(), pool));
         if (prop) {
-            QString propDataQString = QString(prop->data);
+            QString propDataQString;
+            if(propertyName == "svn:owner" || propertyName == "svn:group")
+                propDataQString = QString(prop->data).split(" ").last();
+            else
+                propDataQString = QString(prop->data);
+
             if(posixProperties[repositoryName][path][propertyName] != propDataQString) {
                 qDebug() << "fetchPosixProperties" << "repository:" << repositoryName << "path:" << path << "propertyName" << propertyName;
                 posixProperties[repositoryName][path][propertyName] = QString(prop->data);
